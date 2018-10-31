@@ -1,0 +1,113 @@
+grep '^-' 'Build a docker image with terraform.txt'
+
+- Summary
+
+docker run -itd --name terraform mbigras/terraform
+docker exec terraform terraform --version
+
+aws_access_key=$(lpass show --note aws/root-credentials | awk -F= '/aws_access_key_id/{ print $NF }')
+aws_secret_access_key=$(lpass show --note aws/root-credentials | awk -F= '/aws_secret_access_key/{ print $NF }')
+cat <<EOF > terraform.tfvars
+aws_access_key = "$aws_access_key"
+aws_secret_access_key = "$aws_secret_access_key"
+EOF
+
+docker cp plan.tf terraform:plan.tf
+docker cp terraform.tfvars terraform:terraform.tfvars
+docker exec terraform terraform init
+docker exec terraform terraform plan
+
+docker rm -f terraform
+
+- Build a docker image
+
+docker build --tag mbigras/terraform .
+
+- Step into container
+
+docker run -it mbigras/terraform
+
+- Build a terraform plan
+
+https://www.terraform.io/intro/getting-started/build.html
+
+provider "aws" {
+  access_key = "ACCESS_KEY_HERE"
+  secret_key = "SECRET_KEY_HERE"
+  region     = "us-east-1"
+}
+
+resource "aws_instance" "example" {
+  ami           = "ami-2757f631"
+  instance_type = "t2.micro"
+}
+
+- Initialize provider - failed
+
+terraform init
+
+Error installing provider "aws": Get https://releases.hashicorp.com/terraform-provider-aws/: x509: failed to load system roots and no roots provided.
+
+- Install ca-certificates for alpine
+
+apk add ca-certificates
+
+- Initialize provider
+
+terraform init
+
+- View the plan - failed
+
+terraform plan
+
+Error: Error running plan: 1 error(s) occurred:
+
+* provider.aws: error validating provider credentials: error calling sts:GetCallerIdentity: InvalidClientTokenId: The security token included in the request is invalid.
+	status code: 403, request id: 4e2ebf51-dc9e-11e8-ab67-63ce6adba172
+
+- Copy aws credentials into container
+
+docker run --name terraform -it mbigras/terraform
+lpass login
+creds=$(mktemp)
+lpass show --notes aws/root-credentials > $creds
+docker cp $creds terraform:/root/aws-credentials.txt
+
+- Use variables in my terraform plan
+
+foo = "${var.my_foo}"
+bar = "${var.my_bar}"
+baz = "${var.my_baz}"
+
+variable "aws_access_key" {}
+variable "aws_secret_key" {}
+variable "aws_region" {
+  default = "us-west-1"
+}
+
+provider "aws" {
+  access_key = "${var.aws_access_key}"
+  secret_key = "${var.aws_secret_key}"
+  region     = "${var.aws_region}"
+}
+
+resource "aws_instance" "example" {
+  ami           = "ami-2757f631"
+  instance_type = "t2.micro"
+}
+
+- Pass variables from cli - failed
+
+ -var 'foo=bar'
+
+aws_access_key=$(awk -F= '/aws_access_key_id/{ print $NF }' aws-credentials.txt)
+aws_secret_access_key=$(awk -F= '/aws_secret_access_key/{ print $NF }' aws-credentials.txt)
+terraform plan -var "aws_access_key=$aws_access_key" -var "aws_secret_key=$aws_secret_key"
+
+No valid credential sources found for AWS Provider.
+
+- Use a terraform.tfvars file instead
+
+awk '{ $NF = ""; print }' terraform.tfvars
+aws_access_key =
+aws_secret_key =
